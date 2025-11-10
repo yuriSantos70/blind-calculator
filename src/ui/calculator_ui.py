@@ -70,6 +70,11 @@ class CalculatorApp:
         self.rate_var = tk.IntVar(value=180)
         self.fast_digits_enabled = tk.BooleanVar(value=True)
         self.fast_digits_mult = tk.DoubleVar(value=2.0)
+        self.settings_window: tk.Toplevel | None = None
+        self.rate_label: ttk.Label | None = None
+        self.fast_label: ttk.Label | None = None
+        self.voice_var = tk.StringVar()
+        self.voices = self.tts.get_voices()
 
         self._build_ui()
         self._bind_keys()
@@ -95,48 +100,27 @@ class CalculatorApp:
         self.mode_btn = ttk.Button(topbar, text="Modo: Graus", command=self.toggle_mode)
         self.mode_btn.pack(side="left")
 
+        ttk.Button(topbar, text="Configurações", command=self._open_settings).pack(side="left", padx=6)
         ttk.Button(topbar, text="Ler expressão", command=self.read_expression).pack(side="left", padx=6)
-        ttk.Button(topbar, text="Limpar (C)", command=lambda: self._press("C")).pack(side="left")
-        ttk.Button(topbar, text="Apagar (⌫)", command=lambda: self._press("⌫")).pack(side="left", padx=6)
-
-        beep_chk = ttk.Checkbutton(topbar, text="Beep", variable=self.beep_enabled)
-        beep_chk.pack(side="left", padx=6)
-
-        voice_frame = ttk.LabelFrame(main, text="Voz e velocidade")
-        voice_frame.pack(fill="x", pady=(6, 8))
-
-        row = ttk.Frame(voice_frame)
-        row.pack(fill="x", pady=4)
-        ttk.Label(row, text="Velocidade da fala:").pack(side="left")
-        rate_scale = ttk.Scale(row, from_=50, to=300, variable=self.rate_var, command=self._on_rate_change)
-        rate_scale.pack(side="left", fill="x", expand=True, padx=8)
-        self.rate_label = ttk.Label(row, text=f"{self.rate_var.get()} wpm")
-        self.rate_label.pack(side="left")
-
-        row2 = ttk.Frame(voice_frame)
-        row2.pack(fill="x", pady=4)
-        fast_chk = ttk.Checkbutton(
-            row2,
-            text="Acelerar leitura de dígitos",
-            variable=self.fast_digits_enabled,
-        )
-        fast_chk.pack(side="left")
-        ttk.Label(row2, text="Multiplicador:").pack(side="left", padx=(12, 4))
-        fast_scale = ttk.Scale(
-            row2,
-            from_=1.0,
-            to=3.0,
-            variable=self.fast_digits_mult,
-            command=lambda _=None: self._update_fast_label(),
-        )
-        fast_scale.pack(side="left", fill="x", expand=True, padx=8)
-        self.fast_label = ttk.Label(row2, text=f"{self.fast_digits_mult.get():.1f}x")
-        self.fast_label.pack(side="left")
-
-        ttk.Button(voice_frame, text="Testar voz", command=lambda: self.tts.say("Teste de voz. Um dois três.")).pack(pady=6)
 
         grid = ttk.Frame(main)
         grid.pack(fill="both", expand=True)
+
+        operator_labels = {"+", "-", "×", "÷", "^"}
+        primary_labels = {"="}
+        action_labels = {"C", "⌫"}
+        digit_labels = set("0123456789")
+
+        def resolve_style(label: str) -> str:
+            if label in primary_labels:
+                return "CalcPrimary.TButton"
+            if label in operator_labels:
+                return "CalcOperator.TButton"
+            if label in action_labels:
+                return "CalcAction.TButton"
+            if label in digit_labels or label == ".":
+                return "CalcDigit.TButton"
+            return "CalcFunction.TButton"
 
         buttons = [
             [("sin", "sin("), ("cos", "cos("), ("tan", "tan("), ("π", "pi")],
@@ -152,7 +136,8 @@ class CalculatorApp:
 
         for r_index, row_def in enumerate(buttons):
             for c_index, (label, token) in enumerate(row_def):
-                button = ttk.Button(grid, text=label, command=lambda t=token: self._press(t))
+                style_name = resolve_style(label)
+                button = ttk.Button(grid, text=label, command=lambda t=token: self._press(t), style=style_name)
                 button.grid(row=r_index, column=c_index, sticky="nsew", padx=3, pady=3)
         for idx in range(4):
             grid.columnconfigure(idx, weight=1)
@@ -173,11 +158,13 @@ class CalculatorApp:
         tips.pack(fill="x", pady=(6, 0))
 
     def _update_fast_label(self) -> None:
-        self.fast_label.config(text=f"{self.fast_digits_mult.get():.1f}x")
+        if self.fast_label and self.fast_label.winfo_exists():
+            self.fast_label.config(text=f"{self.fast_digits_mult.get():.1f}x")
 
     def _on_rate_change(self, _event) -> None:
         value = int(self.rate_var.get())
-        self.rate_label.config(text=f"{value} wpm")
+        if self.rate_label and self.rate_label.winfo_exists():
+            self.rate_label.config(text=f"{value} wpm")
         self.tts.set_rate(value)
 
     def _bind_keys(self) -> None:
@@ -191,6 +178,99 @@ class CalculatorApp:
             self.root.bind(char, self._key_insert)
         self.root.bind("x", lambda event: self._press("×"))
         self.root.bind("X", lambda event: self._press("×"))
+
+    def _open_settings(self) -> None:
+        if self.settings_window and self.settings_window.winfo_exists():
+            self.settings_window.focus_set()
+            self.settings_window.lift()
+            return
+
+        self.settings_window = tk.Toplevel(self.root)
+        self.settings_window.title("Configurações")
+        self.settings_window.transient(self.root)
+        self.settings_window.resizable(False, False)
+        self.settings_window.grab_set()
+        self.settings_window.protocol("WM_DELETE_WINDOW", self._close_settings)
+        self.settings_window.bind("<Escape>", lambda _=None: self._close_settings())
+
+        content = ttk.Frame(self.settings_window, padding=14)
+        content.pack(fill="both", expand=True)
+
+        audio_frame = ttk.LabelFrame(content, text="Áudio e voz")
+        audio_frame.pack(fill="x", expand=True)
+
+        ttk.Checkbutton(
+            audio_frame,
+            text="Ativar beep ao pressionar teclas",
+            variable=self.beep_enabled,
+        ).pack(anchor="w", fill="x", pady=(0, 8))
+
+        rate_row = ttk.Frame(audio_frame)
+        rate_row.pack(fill="x", pady=4)
+        ttk.Label(rate_row, text="Velocidade da fala:").pack(side="left")
+        rate_scale = ttk.Scale(rate_row, from_=50, to=300, variable=self.rate_var, command=self._on_rate_change)
+        rate_scale.pack(side="left", fill="x", expand=True, padx=8)
+        self.rate_label = ttk.Label(rate_row, text=f"{self.rate_var.get()} wpm")
+        self.rate_label.pack(side="left")
+
+        fast_row = ttk.Frame(audio_frame)
+        fast_row.pack(fill="x", pady=4)
+        ttk.Checkbutton(
+            fast_row,
+            text="Acelerar leitura de dígitos",
+            variable=self.fast_digits_enabled,
+        ).pack(anchor="w", side="left")
+
+        multiplier_row = ttk.Frame(audio_frame)
+        multiplier_row.pack(fill="x", pady=(4, 0))
+        ttk.Label(multiplier_row, text="Multiplicador de velocidade:").pack(side="left")
+        fast_scale = ttk.Scale(
+            multiplier_row,
+            from_=1.0,
+            to=3.0,
+            variable=self.fast_digits_mult,
+            command=lambda _=None: self._update_fast_label(),
+        )
+        fast_scale.pack(side="left", fill="x", expand=True, padx=8)
+        self.fast_label = ttk.Label(multiplier_row, text=f"{self.fast_digits_mult.get():.1f}x")
+        self.fast_label.pack(side="left")
+
+        ttk.Button(
+            audio_frame,
+            text="Testar voz",
+            command=lambda: self.tts.say("Teste de voz. Um dois três."),
+        ).pack(pady=(8, 0))
+
+        voice_row = ttk.Frame(audio_frame)
+        voice_row.pack(fill="x", pady=(8, 0))
+        ttk.Label(voice_row, text="Voz:").pack(side="left")
+        voice_combo = ttk.Combobox(voice_row, textvariable=self.voice_var, values=[name for name, _ in self.voices], state="readonly")
+        voice_combo.pack(side="left", fill="x", expand=True, padx=(8, 0))
+        self.voice_var.trace_add("write", lambda *args: self._on_voice_change())
+
+        footer = ttk.Frame(content)
+        footer.pack(fill="x", pady=(12, 0))
+        ttk.Button(footer, text="Fechar", command=self._close_settings).pack(side="right")
+
+        self.settings_window.focus()
+        self.settings_window.lift()
+
+    def _close_settings(self) -> None:
+        if not self.settings_window:
+            return
+        if self.settings_window.winfo_exists():
+            self.settings_window.destroy()
+        self.settings_window = None
+        self.rate_label = None
+        self.fast_label = None
+        self.root.focus_set()
+
+    def _on_voice_change(self) -> None:
+        selected_name = self.voice_var.get()
+        for name, vid in self.voices:
+            if name == selected_name:
+                self.tts.set_voice(vid)
+                break
 
     # ---------- Lógica de interação ----------
     def _key_insert(self, event) -> None:
@@ -208,7 +288,10 @@ class CalculatorApp:
         self.sound_manager.play_beep(enabled=self.beep_enabled.get())
 
     def _speak_key(self, token: str) -> None:
-        spoken = self.KEY_SPEECH.get(token, token)
+        if token.endswith("("):
+            spoken = self.KEY_SPEECH.get(token[:-1], token[:-1])
+        else:
+            spoken = self.KEY_SPEECH.get(token, token)
         rate_override = None
 
         if token.isdigit():
