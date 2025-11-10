@@ -1,0 +1,1 @@
+"""Aplicação principal Blind Calculator."""
