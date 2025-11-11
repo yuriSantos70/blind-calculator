@@ -15,7 +15,7 @@ class TTSTk:
     def __init__(
         self,
         root,
-        rate: int = 180,
+        rate: int = 200,
         volume: float = 1.0,
         voice_hint_ptbr: bool = True,
     ) -> None:
@@ -25,7 +25,9 @@ class TTSTk:
         self.voice_hint_ptbr = voice_hint_ptbr
         self.selected_voice_id = None
 
+        # Fila de mensagens TTS e controle de encerramento da thread
         self.queue = queue.Queue()
+        self._stop_event = threading.Event()
         self.worker_thread = threading.Thread(target=self._worker, daemon=True)
         self.worker_thread.start()
 
@@ -51,14 +53,65 @@ class TTSTk:
             return []
 
     def shutdown(self) -> None:
-        pass
+        """Encerra o worker de forma segura e esvazia a fila.
+
+        Se for chamado no fechamento da aplicação, garante que a thread pare.
+        """
+        # Esvazia a fila e sinaliza parada
+        try:
+            self.clear_queue()
+        except Exception:
+            pass
+        self._stop_event.set()
+        # Aguarda por um curto período a thread encerrar
+        try:
+            if self.worker_thread.is_alive():
+                self.worker_thread.join(timeout=1.0)
+        except Exception:
+            pass
 
     # ---------- Internos ----------
     def _worker(self) -> None:
-        while True:
-            text, rate = self.queue.get()
-            self._speak_text(text, rate)
-            self.queue.task_done()
+        # Loop principal do worker: utiliza timeout para checar _stop_event periodicamente
+        while not getattr(self, "_stop_event", threading.Event()).is_set():
+            try:
+                text, rate = self.queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            try:
+                self._speak_text(text, rate)
+            finally:
+                try:
+                    self.queue.task_done()
+                except Exception:
+                    pass
+        # Quando sair do loop, tenta esvaziar a fila residual (não obrigatório, mas seguro)
+        try:
+            while True:
+                self.queue.get_nowait()
+                try:
+                    self.queue.task_done()
+                except Exception:
+                    pass
+        except queue.Empty:
+            pass
+        return
+    
+    def clear_queue(self) -> None:
+        """Esvazia imediatamente a fila de TTS.
+
+        Use isto quando o usuário apertar o botão 'limpar' para cancelar falas pendentes.
+        """
+        try:
+            while True:
+                self.queue.get_nowait()
+                try:
+                    self.queue.task_done()
+                except Exception:
+                    pass
+        except queue.Empty:
+            # fila já vazia
+            pass
     def _speak_text(self, text: str, rate: Optional[int] = None) -> None:
         try:
             # Cria uma nova instância do engine para cada fala, evitando problemas de estado compartilhado

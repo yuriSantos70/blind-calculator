@@ -288,6 +288,12 @@ class CalculatorApp:
         self.sound_manager.play_beep(enabled=self.beep_enabled.get())
 
     def _speak_key(self, token: str) -> None:
+        # Ao falar uma nova tecla, cancela falas pendentes para que a nova mensagem sobreponha
+        try:
+            self.tts.clear_queue()
+        except Exception:
+            pass
+
         if token.endswith("("):
             spoken = self.KEY_SPEECH.get(token[:-1], token[:-1])
         else:
@@ -314,6 +320,12 @@ class CalculatorApp:
         if token == "C":
             self.expr_var.set("")
             self.res_var.set("Resultado: ")
+            # Cancela falas pendentes ao limpar
+            try:
+                self.tts.clear_queue()
+            except Exception:
+                # Se o método não existir ou falhar, ignoramos para manter compatibilidade
+                pass
             return
 
         if token == "⌫":
